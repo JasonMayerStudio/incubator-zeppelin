@@ -682,5 +682,4 @@ public class ZeppelinContext {
     ResourcePool resourcePool = interpreterContext.getResourcePool();
     return resourcePool.getAll();
   }
-
 }

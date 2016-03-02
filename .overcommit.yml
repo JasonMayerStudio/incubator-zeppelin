@@ -1,0 +1,6 @@
+CommitMsg:
+  GerritChangeId:
+    enabled: true
+
+verify_signatures: false
+

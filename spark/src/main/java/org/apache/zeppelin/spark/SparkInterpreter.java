@@ -54,8 +54,8 @@ import org.apache.zeppelin.scheduler.Scheduler;
 import org.apache.zeppelin.scheduler.SchedulerFactory;
 import org.apache.zeppelin.spark.dep.SparkDependencyContext;
 import org.apache.zeppelin.spark.dep.SparkDependencyResolver;
-import org.apache.spark.sql.cassandra.CassandraSQLContext;
 
+import org.apache.zeppelin.spark.utils.VariableStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -120,14 +120,13 @@ public class SparkInterpreter extends Interpreter {
   private SQLContext sqlc;
   private SparkDependencyResolver dep;
   private SparkJLineCompletion completor;
-  private CassandraSQLContext csqlc;
 
   private JobProgressListener sparkListener;
 
   private Map<String, Object> binder;
   private SparkEnv env;
   private SparkVersion sparkVersion;
-
+  private VariableStore vs;
 
   public SparkInterpreter(Properties property) {
     super(property);
@@ -222,14 +221,6 @@ public class SparkInterpreter extends Interpreter {
     }
 
     return sqlc;
-  }
-
-  public CassandraSQLContext getCassandraSQLContext() {
-    if (csqlc == null){
-      csqlc = new CassandraSQLContext(sc);
-    }
-
-    return csqlc;
   }
 
   public SparkDependencyResolver getDependencyResolver() {
@@ -505,30 +496,30 @@ public class SparkInterpreter extends Interpreter {
 
     sqlc = getSQLContext();
 
-    csqlc = getCassandraSQLContext();
-
     dep = getDependencyResolver();
 
     z = new ZeppelinContext(sc, sqlc, null, dep,
         Integer.parseInt(getProperty("zeppelin.spark.maxResult")));
 
+    vs = new VariableStore(z);
+
     intp.interpret("@transient var _binder = new java.util.HashMap[String, Object]()");
     binder = (Map<String, Object>) getValue("_binder");
     binder.put("sc", sc);
     binder.put("sqlc", sqlc);
-    binder.put("csqlc", csqlc);
     binder.put("z", z);
+    binder.put("vs", vs);
 
     intp.interpret("@transient val z = "
                  + "_binder.get(\"z\").asInstanceOf[org.apache.zeppelin.spark.ZeppelinContext]");
+    intp.interpret("@transient val vs = "
+      + "_binder.get(\"vs\").asInstanceOf[org.apache.zeppelin.spark.utils.VariableStore]");
     intp.interpret("@transient val sc = "
                  + "_binder.get(\"sc\").asInstanceOf[org.apache.spark.SparkContext]");
     intp.interpret("@transient val sqlc = "
                  + "_binder.get(\"sqlc\").asInstanceOf[org.apache.spark.sql.SQLContext]");
     intp.interpret("@transient val sqlContext = "
                  + "_binder.get(\"sqlc\").asInstanceOf[org.apache.spark.sql.SQLContext]");
-    intp.interpret("@transient val csqlc = "
-            + "_binder.get(\"csqlc\").asInstanceOf[org.apache.spark.sql.cassandra.CassandraSQLContext]");
     intp.interpret("import org.apache.spark.SparkContext._");
 
     if (sparkVersion.oldSqlContextImplicits()) {
@@ -946,6 +937,10 @@ public class SparkInterpreter extends Interpreter {
 
   public ZeppelinContext getZeppelinContext() {
     return z;
+  }
+
+  public VariableStore getVariableStore() {
+    return vs;
   }
 
   public SparkVersion getSparkVersion() {
