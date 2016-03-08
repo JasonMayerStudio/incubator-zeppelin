@@ -32,12 +32,14 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Spark Cassandra SQL interpreter for Zeppelin.
  */
 public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
   Logger logger = LoggerFactory.getLogger(SparkCassandraSqlInterpreter.class);
+  Map<String, String> variableMap;
 
   static {
     Interpreter.register(
@@ -58,10 +60,13 @@ public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
 
   public SparkCassandraSqlInterpreter(Properties property) {
     super(property);
+    variableMap = new ConcurrentHashMap<>();
   }
 
   Pattern extractIntoTableNamePattern =
-    Pattern.compile("(.*)(into)([ ]+)([a-zA-Z_]+).*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    Pattern.compile(
+      "(.*)(into)([ ]+)([a-zA-Z_]+).*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+    );
 
   /**
    * Given a query like:
@@ -107,6 +112,74 @@ public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
     return snippet.contains("sqlc");
   }
 
+  Pattern extractSetStatement =
+    Pattern.compile(
+      "^\\s*set\\s+([^\\s]+)\\s*=\\s*('.*')\\s*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+    );
+
+  /**
+   * Check to see if snippet is a variable setting statement
+   */
+  private Boolean isSetStatement(String snippet) {
+    return extractSetStatement.matcher(snippet).matches();
+  }
+
+  /**
+   * Set a local variable. Used in a query: SET some_local = 'value'
+   */
+  private void setLocalVariable(String setStatement, InterpreterContext context) {
+    String noteId = context.getNoteId();
+    Matcher m = extractSetStatement.matcher(setStatement);
+    if (m.matches()) {
+      String variableName = noteId + "#" + m.group(1);
+      String variableValue = m.group(2).substring(1, m.group(2).length() - 1);
+      variableMap.put(variableName, variableValue);
+    }
+  }
+
+  /**
+   * Retrieve the local variable from the map
+   */
+  private String getLocalVariable(String variable, InterpreterContext context) {
+    String noteId = context.getNoteId();
+    String variableName = noteId + "#" + variable;
+    return variableMap.get(variableName);
+  }
+
+  Pattern extractLocalVariable =
+    Pattern.compile("(@\\{[A-z]+\\})", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+  /**
+   * Interpolate your query with local variables: SELECT * FROM @{table} WHERE col='@{value}'
+   */
+  private String interpolateLocalVariable(String snippet, InterpreterContext context) {
+    String injectedString = snippet;
+    Matcher m = extractLocalVariable.matcher(injectedString);
+    while (m.find()) {
+      String group = m.group(1);
+      System.out.println(group);
+      String variableName = group.substring(2, group.length() - 1);
+      String variableValue = getLocalVariable(variableName, context);
+      System.out.println(variableName);
+
+      int start = m.start(1);
+      int end = m.end(1);
+      String prefix = "";
+      String postfix;
+      if (start > 0) {
+        prefix = injectedString.substring(0, start);
+      }
+      if (end <= injectedString.length() - 1) {
+        postfix = injectedString.substring(end);
+      } else {
+        postfix = "";
+      }
+
+      injectedString = prefix + variableValue + postfix;
+      m = extractLocalVariable.matcher(injectedString);
+    }
+    return injectedString;
+  }
   /**
    * Initialize the interpreter. Load all necessary tables here
    */
@@ -141,8 +214,8 @@ public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
     sc.setJobGroup(getJobGroup(context), "Zeppelin", false);
 
     DataFrame rddResult = null;
-    for (String snippet : st.split(";")) {
 
+    for (String snippet : st.split(";")) {
       // Ignore trailing semicolons
       if (snippet.replaceAll("[\n\r ]", "").equals("")) {
         logger.info("Skipping empty bloc.");
@@ -152,9 +225,15 @@ public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
       if (contextSparkSqlContext(snippet)) {
         InterpreterResult sparkResults = getSparkInterpreter().interpret(snippet, context);
         if (sparkResults.code() != Code.SUCCESS) return sparkResults;
+      }
+      else if (isSetStatement(snippet)) {
+        setLocalVariable(snippet, context);
+      }
+      else { // Assume this is SQL
+        String interpolated = interpolateLocalVariable(snippet, context);
+        System.out.println(interpolated);
 
-      } else { // Assume this is SQL
-        String intervalExpanded = CsqlParserUtils.parseAndExpandInterval(snippet);
+        String intervalExpanded = CsqlParserUtils.parseAndExpandInterval(interpolated);
         logger.info("Expanded sql: " + intervalExpanded);
 
         String cleanedSql = removeSqlInto(intervalExpanded);
