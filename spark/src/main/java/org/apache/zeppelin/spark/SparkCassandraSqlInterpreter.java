@@ -27,6 +27,7 @@ import org.apache.zeppelin.spark.utils.CsqlParserUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -180,24 +181,27 @@ public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
     }
     return injectedString;
   }
+
+  private void registerCassandraTable(String keyspace, String tableName) {
+    String source = "org.apache.spark.sql.cassandra";
+    SQLContext sqlc = getSparkInterpreter().getSQLContext();
+    // Register our Cassandra tables as external tables in the spark sql hive context
+    Map<String, String> options = new HashMap<>();
+    options.put("keyspace", keyspace);
+    options.put("table", tableName);
+    if (!Arrays.asList(sqlc.tableNames()).contains(tableName)) {
+      sqlc.createExternalTable(tableName, source, options);
+    }
+  }
+
   /**
    * Initialize the interpreter. Load all necessary tables here
    */
   @Override
   public void open() {
     super.open();
-    String source = "org.apache.spark.sql.cassandra";
-    SQLContext sqlc = getSparkInterpreter().getSQLContext();
-
-    // Register our Cassandra tables as external tables in the spark sql hive context
-    Map<String, String> eventlogOpt = new HashMap<>();
-    eventlogOpt.put("keyspace", "analytics");
-    eventlogOpt.put("table", "eventlog");
-    Map<String, String> experimentOpt = new HashMap<>();
-    experimentOpt.put("keyspace", "analytics");
-    experimentOpt.put("table", "experiment_assignments");
-    sqlc.createExternalTable("eventlog", source, eventlogOpt);
-    sqlc.createExternalTable("experiment_assignments", source, experimentOpt);
+    registerCassandraTable("analytics", "eventlog");
+    registerCassandraTable("analytics", "experiment_assignments");
   }
 
   @Override
