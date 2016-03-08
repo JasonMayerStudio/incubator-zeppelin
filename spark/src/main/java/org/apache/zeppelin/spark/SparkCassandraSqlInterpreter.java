@@ -24,6 +24,7 @@ import org.apache.spark.sql.SQLContext;
 import org.apache.zeppelin.interpreter.*;
 import org.apache.zeppelin.interpreter.InterpreterResult.Code;
 import org.apache.zeppelin.spark.utils.CsqlParserUtils;
+import org.apache.zeppelin.spark.utils.VariableStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -113,75 +114,6 @@ public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
     return snippet.contains("sqlc");
   }
 
-  Pattern extractSetStatement =
-    Pattern.compile(
-      "^\\s*set\\s+([^\\s]+)\\s*=\\s*('.*')\\s*", Pattern.CASE_INSENSITIVE | Pattern.DOTALL
-    );
-
-  /**
-   * Check to see if snippet is a variable setting statement
-   */
-  private Boolean isSetStatement(String snippet) {
-    return extractSetStatement.matcher(snippet).matches();
-  }
-
-  /**
-   * Set a local variable. Used in a query: SET some_local = 'value'
-   */
-  private void setLocalVariable(String setStatement, InterpreterContext context) {
-    String noteId = context.getNoteId();
-    Matcher m = extractSetStatement.matcher(setStatement);
-    if (m.matches()) {
-      String variableName = noteId + "#" + m.group(1);
-      String variableValue = m.group(2).substring(1, m.group(2).length() - 1);
-      variableMap.put(variableName, variableValue);
-    }
-  }
-
-  /**
-   * Retrieve the local variable from the map
-   */
-  private String getLocalVariable(String variable, InterpreterContext context) {
-    String noteId = context.getNoteId();
-    String variableName = noteId + "#" + variable;
-    return variableMap.get(variableName);
-  }
-
-  Pattern extractLocalVariable =
-    Pattern.compile("(@\\{[A-z]+\\})", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-
-  /**
-   * Interpolate your query with local variables: SELECT * FROM @{table} WHERE col='@{value}'
-   */
-  private String interpolateLocalVariable(String snippet, InterpreterContext context) {
-    String injectedString = snippet;
-    Matcher m = extractLocalVariable.matcher(injectedString);
-    while (m.find()) {
-      String group = m.group(1);
-      System.out.println(group);
-      String variableName = group.substring(2, group.length() - 1);
-      String variableValue = getLocalVariable(variableName, context);
-      System.out.println(variableName);
-
-      int start = m.start(1);
-      int end = m.end(1);
-      String prefix = "";
-      String postfix;
-      if (start > 0) {
-        prefix = injectedString.substring(0, start);
-      }
-      if (end <= injectedString.length() - 1) {
-        postfix = injectedString.substring(end);
-      } else {
-        postfix = "";
-      }
-
-      injectedString = prefix + variableValue + postfix;
-      m = extractLocalVariable.matcher(injectedString);
-    }
-    return injectedString;
-  }
-
   private void registerCassandraTable(String keyspace, String tableName) {
     String source = "org.apache.spark.sql.cassandra";
     SQLContext sqlc = getSparkInterpreter().getSQLContext();
@@ -208,6 +140,7 @@ public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
   public InterpreterResult interpret(String st, InterpreterContext context) {
     SQLContext sqlc = getSparkInterpreter().getSQLContext();
     SparkContext sc = sqlc.sparkContext();
+    VariableStore vs = getSparkInterpreter().getVariableStore();
 
     if (concurrentSQL()) {
       sc.setLocalProperty("spark.scheduler.pool", "fair");
@@ -230,11 +163,11 @@ public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
         InterpreterResult sparkResults = getSparkInterpreter().interpret(snippet, context);
         if (sparkResults.code() != Code.SUCCESS) return sparkResults;
       }
-      else if (isSetStatement(snippet)) {
-        setLocalVariable(snippet, context);
+      else if (vs.isSetStatement(snippet)) {
+        vs.setLocalVariable(snippet);
       }
       else { // Assume this is SQL
-        String interpolated = interpolateLocalVariable(snippet, context);
+        String interpolated = vs.interpolateLocalVariable(snippet);
         System.out.println(interpolated);
 
         String intervalExpanded = CsqlParserUtils.parseAndExpandInterval(interpolated);
