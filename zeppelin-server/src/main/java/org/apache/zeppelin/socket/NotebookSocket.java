@@ -61,6 +61,7 @@ public class NotebookSocket extends WebSocketAdapter {
   }
 
   public void send(String serializeMessage) throws IOException {
-    session.getRemote().sendString(serializeMessage);
+    // fire and forget -- we risk hitting outgoing buffer limit but this is the easiest solution for now
+    session.getRemote().sendStringByFuture(serializeMessage);
   }
 }
