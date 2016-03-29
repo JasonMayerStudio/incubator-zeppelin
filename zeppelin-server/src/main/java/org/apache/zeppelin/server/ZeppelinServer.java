@@ -23,7 +23,6 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Set;
 
-import javax.net.ssl.SSLContext;
 import javax.servlet.DispatcherType;
 import javax.ws.rs.core.Application;
 
@@ -40,18 +39,10 @@ import org.apache.zeppelin.scheduler.SchedulerFactory;
 import org.apache.zeppelin.search.SearchService;
 import org.apache.zeppelin.search.LuceneSearch;
 import org.apache.zeppelin.socket.NotebookServer;
-import org.eclipse.jetty.server.AbstractConnector;
-import org.eclipse.jetty.server.Handler;
-import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.*;
 import org.eclipse.jetty.server.handler.ContextHandlerCollection;
-import org.eclipse.jetty.server.nio.SelectChannelConnector;
 import org.eclipse.jetty.server.session.SessionHandler;
-import org.eclipse.jetty.server.ssl.SslSelectChannelConnector;
-import org.eclipse.jetty.servlet.DefaultServlet;
-import org.eclipse.jetty.servlet.FilterHolder;
-import org.eclipse.jetty.servlet.ServletContextHandler;
-import org.eclipse.jetty.servlet.ServletHolder;
-import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.servlet.*;
 import org.eclipse.jetty.webapp.WebAppContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -103,7 +94,7 @@ public class ZeppelinServer extends Application {
 
     // add all handlers
     ContextHandlerCollection contexts = new ContextHandlerCollection();
-    contexts.setHandlers(new Handler[]{restApiContext, notebookContext, webApp});
+    contexts.setHandlers(new Handler[]{ restApiContext, notebookContext, webApp });
 
     jettyWebServer = setupJettyServer(conf);
     jettyWebServer.setHandler(contexts);
@@ -148,22 +139,16 @@ public class ZeppelinServer extends Application {
   }
 
   private static Server setupJettyServer(ZeppelinConfiguration conf) {
-    AbstractConnector connector;
-    if (conf.useSsl()) {
-      connector = new SslSelectChannelConnector(getSslContextFactory(conf));
-    } else {
-      connector = new SelectChannelConnector();
-    }
-
     // Set some timeout options to make debugging easier.
     int timeout = 1000 * 30;
-    connector.setMaxIdleTime(timeout);
-    connector.setSoLingerTime(-1);
-    connector.setHost(conf.getServerAddress());
-    connector.setPort(conf.getServerPort());
 
     final Server server = new Server();
-    server.addConnector(connector);
+    ServerConnector serverConnector = new ServerConnector(server);
+    serverConnector.setHost(conf.getServerAddress());
+    serverConnector.setPort(conf.getServerPort());
+    serverConnector.setIdleTimeout(timeout);
+    serverConnector.setSoLingerTime(-1);
+    server.addConnector(serverConnector);
 
     return server;
   }
@@ -171,50 +156,19 @@ public class ZeppelinServer extends Application {
   private static ServletContextHandler setupNotebookServer(ZeppelinConfiguration conf) {
     notebookWsServer = new NotebookServer();
     final ServletHolder servletHolder = new ServletHolder(notebookWsServer);
+    servletHolder.setServlet(notebookWsServer);
     servletHolder.setInitParameter("maxTextMessageSize", "1024000");
 
     final ServletContextHandler cxfContext = new ServletContextHandler(
         ServletContextHandler.SESSIONS);
 
     cxfContext.setSessionHandler(new SessionHandler());
-    cxfContext.setContextPath(conf.getServerContextPath());
-    cxfContext.addServlet(servletHolder, "/ws/*");
+    cxfContext.setContextPath(conf.getString(ConfVars.ZEPPELIN_WEBSOCKET_CONTEXT_PATH));
+    cxfContext.setAllowNullPathInfo(true);
+    cxfContext.addServlet(servletHolder, "/*");
     cxfContext.addFilter(new FilterHolder(CorsFilter.class), "/*",
         EnumSet.allOf(DispatcherType.class));
     return cxfContext;
-  }
-
-  @SuppressWarnings("deprecation")
-  private static SslContextFactory getSslContextFactory(ZeppelinConfiguration conf) {
-    // Note that the API for the SslContextFactory is different for
-    // Jetty version 9
-    SslContextFactory sslContextFactory = new SslContextFactory();
-
-    // Set keystore
-    sslContextFactory.setKeyStore(conf.getKeyStorePath());
-    sslContextFactory.setKeyStoreType(conf.getKeyStoreType());
-    sslContextFactory.setKeyStorePassword(conf.getKeyStorePassword());
-    sslContextFactory.setKeyManagerPassword(conf.getKeyManagerPassword());
-
-    // Set truststore
-    sslContextFactory.setTrustStore(conf.getTrustStorePath());
-    sslContextFactory.setTrustStoreType(conf.getTrustStoreType());
-    sslContextFactory.setTrustStorePassword(conf.getTrustStorePassword());
-
-    sslContextFactory.setNeedClientAuth(conf.useClientAuth());
-
-    return sslContextFactory;
-  }
-
-  @SuppressWarnings("unused") //TODO(bzz) why unused?
-  private static SSLContext getSslContext(ZeppelinConfiguration conf)
-      throws Exception {
-
-    SslContextFactory scf = getSslContextFactory(conf);
-    if (!scf.isStarted()) {
-      scf.start();
-    }
-    return scf.getSslContext();
   }
 
   private static ServletContextHandler setupRestApiContextHandler(ZeppelinConfiguration conf) {
@@ -225,8 +179,8 @@ public class ZeppelinServer extends Application {
 
     final ServletContextHandler cxfContext = new ServletContextHandler();
     cxfContext.setSessionHandler(new SessionHandler());
-    cxfContext.setContextPath(conf.getServerContextPath());
-    cxfContext.addServlet(cxfServletHolder, "/api/*");
+    cxfContext.setContextPath(conf.getString(ConfVars.ZEPPELIN_API_CONTEXT_PATH));
+    cxfContext.addServlet(cxfServletHolder, "/*");
 
     cxfContext.addFilter(new FilterHolder(CorsFilter.class), "/*",
         EnumSet.allOf(DispatcherType.class));
@@ -243,7 +197,7 @@ public class ZeppelinServer extends Application {
       ZeppelinConfiguration conf) {
 
     WebAppContext webApp = new WebAppContext();
-    webApp.setContextPath(conf.getServerContextPath());
+    webApp.setContextPath(conf.getString(ConfVars.ZEPPELIN_WEBAPP_CONTEXT_PATH));
     File warPath = new File(conf.getString(ConfVars.ZEPPELIN_WAR));
     if (warPath.isDirectory()) {
       // Development mode, read from FS
@@ -259,7 +213,7 @@ public class ZeppelinServer extends Application {
       webApp.setTempDirectory(warTempDirectory);
     }
     // Explicit bind to root
-    webApp.addServlet(new ServletHolder(new DefaultServlet()), "/*");
+    webApp.addServlet(DefaultServlet.class, "/*");
     return webApp;
   }
 

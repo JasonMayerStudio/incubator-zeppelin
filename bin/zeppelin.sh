@@ -48,6 +48,10 @@ LOG="${ZEPPELIN_LOG_DIR}/zeppelin-cli-${ZEPPELIN_IDENT_STRING}-${HOSTNAME}.out"
 ZEPPELIN_SERVER=org.apache.zeppelin.server.ZeppelinServer
 JAVA_OPTS+=" -Dzeppelin.log.file=${ZEPPELIN_LOGFILE}"
 
+# FOR DEBUGGING, COMMENT OUT NEXT LINE
+#JAVA_OPTS+=" -Xdebug -agentlib:jdwp=transport=dt_socket,address=5005,server=y,suspend=y"
+# set up a remote debug configuration on port 5005
+
 # construct classpath
 if [[ -d "${ZEPPELIN_HOME}/zeppelin-interpreter/target/classes" ]]; then
   ZEPPELIN_CLASSPATH+=":${ZEPPELIN_HOME}/zeppelin-interpreter/target/classes"

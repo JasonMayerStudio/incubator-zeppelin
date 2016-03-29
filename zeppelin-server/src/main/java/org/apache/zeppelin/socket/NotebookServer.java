@@ -29,7 +29,6 @@ import org.apache.zeppelin.conf.ZeppelinConfiguration.ConfVars;
 import org.apache.zeppelin.display.AngularObject;
 import org.apache.zeppelin.display.AngularObjectRegistry;
 import org.apache.zeppelin.display.AngularObjectRegistryListener;
-import org.apache.zeppelin.display.Input;
 import org.apache.zeppelin.interpreter.InterpreterOutput;
 import org.apache.zeppelin.interpreter.InterpreterResult;
 import org.apache.zeppelin.interpreter.InterpreterSetting;
@@ -37,13 +36,11 @@ import org.apache.zeppelin.interpreter.remote.RemoteInterpreterProcessListener;
 import org.apache.zeppelin.notebook.*;
 import org.apache.zeppelin.scheduler.Job;
 import org.apache.zeppelin.scheduler.Job.Status;
-import org.apache.zeppelin.scheduler.JobListener;
 import org.apache.zeppelin.server.ZeppelinServer;
 import org.apache.zeppelin.socket.Message.OP;
 import org.apache.zeppelin.ticket.TicketContainer;
 import org.apache.zeppelin.utils.SecurityUtils;
-import org.eclipse.jetty.websocket.WebSocket;
-import org.eclipse.jetty.websocket.WebSocketServlet;
+import org.eclipse.jetty.websocket.servlet.*;
 import org.quartz.SchedulerException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +55,20 @@ import com.google.gson.Gson;
 public class NotebookServer extends WebSocketServlet implements
         NotebookSocketListener, JobListenerFactory, AngularObjectRegistryListener,
         RemoteInterpreterProcessListener {
+
+  class NotebookCreator implements WebSocketCreator {
+    private NotebookSocketListener listener;
+
+    public NotebookCreator(NotebookSocketListener listener) {
+      this.listener = listener;
+    }
+
+    @Override
+    public Object createWebSocket(ServletUpgradeRequest servletUpgradeRequest, ServletUpgradeResponse servletUpgradeResponse) {
+      return new NotebookSocket(servletUpgradeRequest.getHttpServletRequest(), listener);
+    }
+  }
+
   private static final Logger LOG = LoggerFactory.getLogger(NotebookServer.class);
   Gson gson = new Gson();
   final Map<String, List<NotebookSocket>> noteSocketMap = new HashMap<>();
@@ -67,7 +78,6 @@ public class NotebookServer extends WebSocketServlet implements
     return ZeppelinServer.notebook;
   }
 
-  @Override
   public boolean checkOrigin(HttpServletRequest request, String origin) {
     try {
       return SecurityUtils.isValidOrigin(origin, ZeppelinConfiguration.create());
@@ -77,11 +87,6 @@ public class NotebookServer extends WebSocketServlet implements
       LOG.error(e.toString(), e);
     }
     return false;
-  }
-
-  @Override
-  public WebSocket doWebSocketConnect(HttpServletRequest req, String protocol) {
-    return new NotebookSocket(req, protocol, this);
   }
 
   @Override
@@ -394,7 +399,7 @@ public class NotebookServer extends WebSocketServlet implements
     }
   }
 
-  private void updateNote(WebSocket conn, Notebook notebook, Message fromMessage)
+  private void updateNote(NotebookSocket conn, Notebook notebook, Message fromMessage)
       throws SchedulerException, IOException {
     String noteId = (String) fromMessage.get("id");
     String name = (String) fromMessage.get("name");
@@ -454,7 +459,7 @@ public class NotebookServer extends WebSocketServlet implements
     broadcastNoteList();
   }
 
-  private void removeNote(WebSocket conn, Notebook notebook, Message fromMessage)
+  private void removeNote(NotebookSocket conn, Notebook notebook, Message fromMessage)
       throws IOException {
     String noteId = (String) fromMessage.get("id");
     if (noteId == null) {
@@ -776,6 +781,11 @@ public class NotebookServer extends WebSocketServlet implements
             .put("data", output);
     Paragraph paragraph = notebook().getNote(noteId).getParagraph(paragraphId);
     broadcast(noteId, msg);
+  }
+
+  @Override
+  public void configure(WebSocketServletFactory webSocketServletFactory) {
+    webSocketServletFactory.setCreator(new NotebookCreator(this));
   }
 
   /**
