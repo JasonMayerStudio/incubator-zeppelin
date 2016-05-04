@@ -249,6 +249,7 @@ public class Paragraph extends Job implements Serializable, Cloneable {
   protected Object jobRun() throws Throwable {
     String replName = getRequiredReplName();
     Interpreter repl = getRepl(replName);
+    lastInterpreterUsed = repl;
     logger().info("run paragraph {} using {} " + repl, getId(), replName);
     if (repl == null) {
       logger().error("Can not find interpreter name " + repl);
@@ -456,5 +457,14 @@ public class Paragraph extends Job implements Serializable, Cloneable {
       }
     }
     return scriptBody;
+  }
+
+  private transient Interpreter lastInterpreterUsed = null;
+
+  protected boolean needsRerun(){
+    String replName = getRequiredReplName();
+    Interpreter currentRepl = getRepl(replName);
+
+    return lastInterpreterUsed != currentRepl;
   }
 }

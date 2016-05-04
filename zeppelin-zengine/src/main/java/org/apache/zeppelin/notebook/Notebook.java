@@ -45,15 +45,7 @@ import org.apache.zeppelin.scheduler.SchedulerFactory;
 import org.apache.zeppelin.search.SearchService;
 import org.apache.zeppelin.user.AuthenticationInfo;
 import org.apache.zeppelin.user.Credentials;
-import org.quartz.CronScheduleBuilder;
-import org.quartz.CronTrigger;
-import org.quartz.JobBuilder;
-import org.quartz.JobDetail;
-import org.quartz.JobExecutionContext;
-import org.quartz.JobExecutionException;
-import org.quartz.JobKey;
-import org.quartz.SchedulerException;
-import org.quartz.TriggerBuilder;
+import org.quartz.*;
 import org.quartz.impl.StdSchedulerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,6 +53,7 @@ import org.slf4j.LoggerFactory;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.stream.JsonReader;
+import static org.quartz.SimpleScheduleBuilder.*;
 /**
  * Collection of Notes.
  */
@@ -114,6 +107,7 @@ public class Notebook {
     quartzSched = quertzSchedFact.getScheduler();
     quartzSched.start();
     CronJob.notebook = this;
+    StartupJob.notebook = this;
 
     loadAllNotes();
     if (this.notebookIndex != null) {
@@ -639,15 +633,15 @@ public class Notebook {
       String noteId = context.getJobDetail().getJobDataMap().getString("noteId");
       Note note = notebook.getNote(noteId);
       note.runAll();
-    
-      while (!note.isTerminated()) {
+
+      while (!note.getLastParagraph().isTerminated()) {
         try {
           Thread.sleep(1000);
         } catch (InterruptedException e) {
           logger.error(e.toString(), e);
         }
       }
-      
+
       boolean releaseResource = false;
       try {
         Map<String, Object> config = note.getConfig();
@@ -661,9 +655,50 @@ public class Notebook {
         for (InterpreterSetting setting : note.getNoteReplLoader().getInterpreterSettings()) {
           notebook.getInterpreterFactory().restart(setting.id());
         }
-      }      
+      }
     }
   }
+
+  /**
+   * A little hacky: a StartupJob is run at startup. Since we want to also re-run a
+   * job if the interpreter is restarted this will occasionally check to see if the interpreter
+   * context has changes for any paragraph that has already been run.
+   */
+  public static class StartupJob implements org.quartz.Job {
+    public static Notebook notebook;
+
+    @Override
+    public void execute(JobExecutionContext context) throws JobExecutionException {
+
+      String noteId = context.getJobDetail().getJobDataMap().getString("noteId");
+      Note note = notebook.getNote(noteId);
+      note.runAll(true);
+
+      while (!note.getLastParagraph().isTerminated()) {
+        try {
+          Thread.sleep(1000);
+        } catch (InterruptedException e) {
+          logger.error(e.toString(), e);
+        }
+      }
+
+      boolean releaseResource = false;
+      try {
+        Map<String, Object> config = note.getConfig();
+        if (config != null && config.containsKey("releaseresource")) {
+          releaseResource = (boolean) note.getConfig().get("releaseresource");
+        }
+      } catch (ClassCastException e) {
+        logger.error(e.getMessage(), e);
+      }
+      if (releaseResource) {
+        for (InterpreterSetting setting : note.getNoteReplLoader().getInterpreterSettings()) {
+          notebook.getInterpreterFactory().restart(setting.id());
+        }
+      }
+    }
+  }
+
 
   public void refreshCron(String id) {
     removeCron(id);
@@ -678,45 +713,69 @@ public class Notebook {
         return;
       }
 
-      String cronExpr = (String) note.getConfig().get("cron");
-      if (cronExpr == null || cronExpr.trim().length() == 0) {
+      String cronExpressions = (String) note.getConfig().get("cron");
+      if (cronExpressions == null || cronExpressions.trim().length() == 0) {
         return;
       }
 
+      for (String cronExpr: cronExpressions.split(";")) {
 
-      JobDetail newJob =
-          JobBuilder.newJob(CronJob.class).withIdentity(id, "note").usingJobData("noteId", id)
-          .build();
+        // Special fake cron tab config that runs at startup (but only at startup)
+        if (cronExpr.trim().equalsIgnoreCase("startup")) {
+          logger.info("Scheduling notebook to run immediately: " + note.getName());
+          Map<String, Object> info = note.getInfo();
+          Trigger trigger = TriggerBuilder.newTrigger()
+                  .withIdentity("trigger_startup_" + id, "note")
+                  .forJob(id, "startup-note")
+                  .startNow()
+                  .withSchedule(simpleSchedule()
+                          .withIntervalInSeconds(60)
+                          .repeatForever())
+                  .build();
+          scheduleJob("startup-note", note, id, trigger, StartupJob.class);
 
-      Map<String, Object> info = note.getInfo();
-      info.put("cron", null);
+        } else {
+          Map<String, Object> info = note.getInfo();
+          CronTrigger trigger = null;
+          try {
+            trigger =
+                    TriggerBuilder.newTrigger().withIdentity("trigger_" + id, "note")
+                            .withSchedule(CronScheduleBuilder.cronSchedule(cronExpr.trim()))
+                            .forJob(id, "note")
+                            .build();
+          } catch (Exception e) {
+            logger.error("Error", e);
+            info.put("cron", e.getMessage());
+          }
 
-      CronTrigger trigger = null;
-      try {
-        trigger =
-            TriggerBuilder.newTrigger().withIdentity("trigger_" + id, "note")
-            .withSchedule(CronScheduleBuilder.cronSchedule(cronExpr)).forJob(id, "note")
-            .build();
-      } catch (Exception e) {
-        logger.error("Error", e);
-        info.put("cron", e.getMessage());
-      }
-
-
-      try {
-        if (trigger != null) {
-          quartzSched.scheduleJob(newJob, trigger);
+          scheduleJob("note", note, id, trigger, CronJob.class);
         }
-      } catch (SchedulerException e) {
-        logger.error("Error", e);
-        info.put("cron", "Scheduler Exception");
       }
+    }
+  }
+
+  private void scheduleJob(String group, Note note, String id, Trigger trigger, Class cronClass){
+    JobDetail newJob =
+            JobBuilder.newJob(cronClass).withIdentity(id, group).usingJobData("noteId", id)
+                    .build();
+
+    Map<String, Object> info = note.getInfo();
+    info.put("cron", null);
+
+    try {
+      if (trigger != null) {
+        quartzSched.scheduleJob(newJob, trigger);
+      }
+    } catch (SchedulerException e) {
+      logger.error("Error", e);
+      info.put("cron", "Scheduler Exception");
     }
   }
 
   private void removeCron(String id) {
     try {
       quartzSched.deleteJob(new JobKey(id, "note"));
+      quartzSched.deleteJob(new JobKey(id, "startup-note"));
     } catch (SchedulerException e) {
       logger.error("Can't remove quertz " + id, e);
     }
