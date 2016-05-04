@@ -343,16 +343,22 @@ public class Note implements Serializable, JobListener {
     return paragraphsInfo;
   }
 
+  public void runAll() {
+    runAll(false);
+  }
+
   /**
    * Run all paragraphs sequentially.
    */
-  public void runAll() {
+  public void runAll(boolean startupJob) {
     synchronized (paragraphs) {
       for (Paragraph p : paragraphs) {
         p.setNoteReplLoader(replLoader);
         p.setListener(jobListenerFactory.getParagraphJobListener(this));
         Interpreter intp = replLoader.get(p.getRequiredReplName());
-        intp.getScheduler().submit(p);
+        if (!startupJob || p.needsRerun()) {
+          intp.getScheduler().submit(p);
+        }
       }
     }
   }
