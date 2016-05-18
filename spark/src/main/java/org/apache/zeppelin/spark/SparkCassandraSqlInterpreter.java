@@ -111,7 +111,7 @@ public class SparkCassandraSqlInterpreter extends SparkSqlInterpreter {
    * like register a UDF but looking for any use of a Cassandra SQL context.
    */
   private Boolean contextSparkSqlContext(String snippet) {
-    return snippet.contains("sqlc");
+    return snippet.contains("sqlc") || snippet.contains("sqlContext");
   }
 
   private void registerCassandraTable(String keyspace, String tableName) {
