@@ -571,16 +571,15 @@ public class Notebook {
         if (cronExpr.trim().equalsIgnoreCase("startup")) {
           logger.info("Scheduling notebook to run immediately: " + note.getName());
           Map<String, Object> info = note.getInfo();
-          Trigger trigger = TriggerBuilder.newTrigger().withIdentity("trigger_" + id, "note")
-                  .forJob(id, "note")
+          Trigger trigger = TriggerBuilder.newTrigger().withIdentity("trigger_startup_" + id, "note")
+                  .forJob(id, "startup-note")
                   .startNow()
                   .withSchedule(simpleSchedule()
                           .withIntervalInSeconds(60)
                           .repeatForever())
                   .build();
-          scheduleJob(note, id, trigger, StartupJob.class);
+          scheduleJob("startup-note", note, id, trigger, StartupJob.class);
 
-          return;
         } else {
           Map<String, Object> info = note.getInfo();
           CronTrigger trigger = null;
@@ -594,15 +593,15 @@ public class Notebook {
             info.put("cron", e.getMessage());
           }
 
-          scheduleJob(note, id, trigger, CronJob.class);
+          scheduleJob("note", note, id, trigger, CronJob.class);
         }
       }
     }
   }
 
-  private void scheduleJob(Note note, String id, Trigger trigger, Class cronClass){
+  private void scheduleJob(String group, Note note, String id, Trigger trigger, Class cronClass){
     JobDetail newJob =
-            JobBuilder.newJob(cronClass).withIdentity(id, "note").usingJobData("noteId", id)
+            JobBuilder.newJob(cronClass).withIdentity(id, group).usingJobData("noteId", id)
                     .build();
 
     Map<String, Object> info = note.getInfo();
