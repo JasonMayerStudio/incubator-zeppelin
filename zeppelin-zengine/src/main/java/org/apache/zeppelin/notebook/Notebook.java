@@ -620,6 +620,7 @@ public class Notebook {
   private void removeCron(String id) {
     try {
       quartzSched.deleteJob(new JobKey(id, "note"));
+      quartzSched.deleteJob(new JobKey(id, "startup-note"));
     } catch (SchedulerException e) {
       logger.error("Can't remove quertz " + id, e);
     }
