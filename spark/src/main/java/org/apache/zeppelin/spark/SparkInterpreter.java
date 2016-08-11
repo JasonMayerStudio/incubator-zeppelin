@@ -57,6 +57,7 @@ import org.apache.zeppelin.scheduler.Scheduler;
 import org.apache.zeppelin.scheduler.SchedulerFactory;
 import org.apache.zeppelin.spark.dep.SparkDependencyContext;
 import org.apache.zeppelin.spark.dep.SparkDependencyResolver;
+import org.apache.zeppelin.spark.utils.VariableStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -116,6 +117,7 @@ public class SparkInterpreter extends Interpreter {
 
   private Map<String, Object> binder;
   private SparkVersion sparkVersion;
+  private VariableStore vs;
   private File outputDir;          // class outputdir for scala 2.11
   private Object classServer;      // classserver for scala 2.11
 
@@ -764,6 +766,13 @@ public class SparkInterpreter extends Interpreter {
         binder.put("spark", sparkSession);
       }
 
+      vs = new VariableStore(z);
+      binder.put("vs", vs);
+
+      interpret("@transient val vs = "
+              + "_binder.get(\"vs\")"
+              + ".asInstanceOf[org.apache.zeppelin.spark.utils.VariableStore]");
+
       interpret("@transient val z = "
               + "_binder.get(\"z\").asInstanceOf[org.apache.zeppelin.spark.ZeppelinContext]");
       interpret("@transient val sc = "
@@ -1284,6 +1293,10 @@ public class SparkInterpreter extends Interpreter {
 
   public SparkVersion getSparkVersion() {
     return sparkVersion;
+  }
+
+  public VariableStore getVariableStore() {
+    return vs;
   }
 
   private File createTempDir(String dir) {

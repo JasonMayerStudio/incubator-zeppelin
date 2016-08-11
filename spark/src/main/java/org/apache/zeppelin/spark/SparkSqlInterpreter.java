@@ -45,11 +45,11 @@ public class SparkSqlInterpreter extends Interpreter {
   Logger logger = LoggerFactory.getLogger(SparkSqlInterpreter.class);
   AtomicInteger num = new AtomicInteger(0);
 
-  private String getJobGroup(InterpreterContext context){
+  protected String getJobGroup(InterpreterContext context){
     return "zeppelin-" + context.getParagraphId();
   }
 
-  private int maxResult;
+  protected int maxResult;
 
   public SparkSqlInterpreter(Properties property) {
     super(property);
@@ -60,7 +60,7 @@ public class SparkSqlInterpreter extends Interpreter {
     this.maxResult = Integer.parseInt(getProperty("zeppelin.spark.maxResult"));
   }
 
-  private SparkInterpreter getSparkInterpreter() {
+  protected SparkInterpreter getSparkInterpreter() {
     LazyOpenInterpreter lazy = null;
     SparkInterpreter spark = null;
     Interpreter p = getInterpreterInTheSameSessionByClassName(SparkInterpreter.class.getName());
